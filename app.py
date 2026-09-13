@@ -2,9 +2,17 @@ import streamlit as st
 import pandas as pd
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import re
+import random
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # Set page config
 st.set_page_config(
@@ -54,6 +62,13 @@ st.markdown("""
         border-radius: 5px;
         margin: 15px 0;
     }
+    .admit-card {
+        border: 3px solid #667eea;
+        border-radius: 10px;
+        padding: 20px;
+        background: linear-gradient(135deg, #f5f7ff 0%, #f0f4ff 100%);
+        margin: 20px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -74,6 +89,36 @@ if not os.path.exists('student_uploads'):
     os.makedirs('student_uploads')
 
 # ==================== HELPER FUNCTIONS ====================
+
+# Random Instructions Database
+INSTRUCTIONS_DB = [
+    "Bring your admit card and valid ID proof to the exam center.",
+    "Reach the exam center 30 minutes before the exam starts.",
+    "Do not carry mobile phones or electronic devices.",
+    "Maintain silence and discipline throughout the exam.",
+    "Write your roll number on the answer sheet clearly.",
+    "Read the instructions carefully before starting.",
+    "Use only blue or black pen for writing.",
+    "Do not leave the exam hall before the allotted time.",
+    "Inform the invigilator immediately if you face any issue.",
+    "Verify your details printed on the admit card.",
+    "Follow all COVID-19 safety protocols if applicable.",
+    "Be punctual; gates will be closed 15 minutes before exam.",
+    "Avoid discussing exam content with others.",
+    "Use toilet facilities before entering the exam hall.",
+    "Keep your admit card safe for the entire examination period."
+]
+
+EXAM_LOCATIONS = [
+    {"name": "Delhi Center", "location": "New Delhi, India", "code": "DLH-01"},
+    {"name": "Mumbai Center", "location": "Mumbai, Maharashtra", "code": "MUM-02"},
+    {"name": "Bangalore Center", "location": "Bangalore, Karnataka", "code": "BLR-03"},
+    {"name": "Jaipur Center", "location": "Jaipur, Rajasthan", "code": "JAI-04"},
+    {"name": "Pune Center", "location": "Pune, Maharashtra", "code": "PUN-05"},
+    {"name": "Kolkata Center", "location": "Kolkata, West Bengal", "code": "KOL-06"},
+    {"name": "Hyderabad Center", "location": "Hyderabad, Telangana", "code": "HYD-07"},
+    {"name": "Ahmedabad Center", "location": "Ahmedabad, Gujarat", "code": "AMD-08"},
+]
 
 def hash_password(password):
     """Hash password for security"""
@@ -115,6 +160,179 @@ def check_user_exists(email):
 def get_file_size_mb(file_obj):
     """Get file size in MB"""
     return len(file_obj.getvalue()) / (1024 * 1024)
+
+def get_random_instructions():
+    """Get 3 random instructions"""
+    return random.sample(INSTRUCTIONS_DB, min(3, len(INSTRUCTIONS_DB)))
+
+def get_random_exam_location():
+    """Get random exam location"""
+    return random.choice(EXAM_LOCATIONS)
+
+def get_random_exam_date():
+    """Generate random exam date (30-60 days from now)"""
+    days_ahead = random.randint(30, 60)
+    exam_date = datetime.now() + timedelta(days=days_ahead)
+    return exam_date.strftime("%d-%m-%Y")
+
+def get_random_exam_time():
+    """Generate random exam time"""
+    hours = random.choice([9, 10, 14, 15])
+    minutes = random.choice([0, 30])
+    return f"{hours:02d}:{minutes:02d}"
+
+def generate_admit_card_image(form_data, user_email, submission_date, photo_path=None, sign_path=None):
+    """Generate admit card as image"""
+    width, height = 1000, 1400
+    img = Image.new('RGB', (width, height), color='white')
+    draw = ImageDraw.Draw(img)
+    
+    # Colors
+    header_color = (51, 102, 153)
+    text_color = (0, 0, 0)
+    accent_color = (102, 126, 234)
+    
+    y_pos = 20
+    
+    # Header
+    draw.rectangle([(0, 0), (width, 80)], fill=header_color)
+    draw.text((width//2, 20), "NATIONAL INSTITUTE OF ACCOUNTANTS", fill=(255,255,255), anchor="mm", font=None)
+    draw.text((width//2, 50), "STUDENT ADMIT CARD", fill=(255,255,255), anchor="mm", font=None)
+    
+    y_pos = 100
+    
+    # Registration Number
+    draw.rectangle([(50, y_pos), (950, y_pos+40)], outline=accent_color, width=2)
+    draw.text((70, y_pos+20), f"Registration No: {user_email[:12].upper()}", fill=text_color, anchor="lm")
+    y_pos += 60
+    
+    # Student Details
+    draw.rectangle([(50, y_pos), (950, y_pos+25)], fill=(240, 240, 240))
+    draw.text((70, y_pos+12), "STUDENT DETAILS", fill=header_color, anchor="lm")
+    y_pos += 35
+    
+    details = [
+        f"Name: {form_data.get('full_name', 'N/A')}",
+        f"Email: {user_email}",
+        f"Phone: {form_data.get('phone', 'N/A')}",
+        f"DOB: {form_data.get('dob', 'N/A')}",
+        f"Aadhar: {form_data.get('aadhar', 'XXXX XXXX XXXX')[-4:]}",
+    ]
+    
+    for detail in details:
+        draw.text((70, y_pos), detail, fill=text_color)
+        y_pos += 30
+    
+    y_pos += 20
+    
+    # Exam Details
+    exam_location = get_random_exam_location()
+    exam_date = get_random_exam_date()
+    exam_time = get_random_exam_time()
+    
+    draw.rectangle([(50, y_pos), (950, y_pos+25)], fill=(240, 240, 240))
+    draw.text((70, y_pos+12), "EXAM DETAILS", fill=header_color, anchor="lm")
+    y_pos += 35
+    
+    exam_details = [
+        f"Exam Date: {exam_date}",
+        f"Exam Time: {exam_time} AM",
+        f"Center: {exam_location['name']}",
+        f"Location: {exam_location['location']}",
+        f"Center Code: {exam_location['code']}",
+    ]
+    
+    for detail in exam_details:
+        draw.text((70, y_pos), detail, fill=text_color)
+        y_pos += 30
+    
+    y_pos += 20
+    
+    # Photo and Signature Area
+    draw.rectangle([(50, y_pos), (950, y_pos+200)], outline=accent_color, width=2)
+    draw.text((100, y_pos+10), "Photo", fill=text_color)
+    draw.text((750, y_pos+10), "Signature", fill=text_color)
+    
+    draw.rectangle([(70, y_pos+35), (250, y_pos+185)], fill=(230, 230, 230))
+    draw.text((160, y_pos+107), "[Photo]", fill=(150, 150, 150), anchor="mm")
+    
+    draw.rectangle([(750, y_pos+35), (930, y_pos+185)], fill=(230, 230, 230))
+    draw.text((840, y_pos+107), "[Sign]", fill=(150, 150, 150), anchor="mm")
+    
+    y_pos += 220
+    
+    # Instructions
+    draw.rectangle([(50, y_pos), (950, y_pos+25)], fill=(240, 240, 240))
+    draw.text((70, y_pos+12), "IMPORTANT INSTRUCTIONS", fill=header_color, anchor="lm")
+    y_pos += 35
+    
+    instructions = get_random_instructions()
+    for i, instruction in enumerate(instructions, 1):
+        draw.text((70, y_pos), f"{i}. {instruction}", fill=text_color)
+        y_pos += 30
+    
+    y_pos += 20
+    
+    # Submission Date
+    draw.rectangle([(50, y_pos), (950, y_pos+25)], fill=accent_color)
+    draw.text((width//2, y_pos+12), f"Submitted: {submission_date}", fill=(255,255,255), anchor="mm")
+    y_pos += 35
+    
+    # Footer
+    draw.text((width//2, height-40), "This is a digitally generated admit card", fill=(150, 150, 150), anchor="mm")
+    
+    return img
+
+def send_admit_card_email(email, student_name, admit_card_bytes):
+    """Send admit card to student via email"""
+    try:
+        sender_email = st.secrets.get("SENDER_EMAIL", "")
+        sender_password = st.secrets.get("SENDER_PASSWORD", "")
+        
+        if not sender_email or not sender_password:
+            return False, "Email credentials not configured"
+        
+        message = MIMEMultipart()
+        message["From"] = sender_email
+        message["To"] = email
+        message["Subject"] = "Your Admit Card - NIA Student Portal"
+        
+        body = f"""
+        Dear {student_name},
+        
+        Congratulations! Your application has been successfully submitted.
+        
+        Your admit card is attached to this email. Please keep it safe and bring it to the exam center.
+        
+        Important Instructions:
+        - Reach the exam center 30 minutes before the exam time
+        - Carry a valid ID proof along with your admit card
+        - Do not carry mobile phones or electronic devices
+        
+        For any queries, contact us at: contact@nia.edu.in
+        
+        Best regards,
+        NIA Student Portal Team
+        """
+        
+        message.attach(MIMEText(body, "plain"))
+        
+        # Attach admit card
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(admit_card_bytes)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename= admit_card.png")
+        message.attach(part)
+        
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, email, message.as_string())
+        server.quit()
+        
+        return True, "Email sent successfully"
+    except Exception as e:
+        return False, f"Error: {str(e)}"
 
 # ==================== LOGIN & REGISTRATION ====================
 
@@ -441,7 +659,7 @@ def step_3_document_upload():
                 st.rerun()
 
 def step_4_preview():
-    """Step 4: Preview Information"""
+    """Step 4: Preview Information with Photo and Signature"""
     st.markdown("<div class='step-header'><h3>Step 4️⃣ : Preview Application / अनुप्रयोग की समीक्षा करें</h3></div>", 
                unsafe_allow_html=True)
     
@@ -468,20 +686,72 @@ def step_4_preview():
     with st.expander("🏠 Address Information", expanded=True):
         st.text(form_data.get('address', 'N/A'))
     
-    # Documents Review
+    # Documents Review with Images
     with st.expander("📄 Uploaded Documents", expanded=True):
-        doc_names = {
-            'photo_file': '🖼️ Photo',
-            'signature_file': '✍️ Signature',
-            'marksheet_file': '📊 Marksheet',
-            'aadhar_file': '🆔 Aadhaar'
-        }
+        uploads_dir = f"student_uploads/{user_email}"
         
-        for doc_key, doc_display in doc_names.items():
-            if form_data.get(doc_key):
-                st.write(f"✅ {doc_display}: {form_data.get(doc_key)}")
-            else:
-                st.write(f"❌ {doc_display}: Not uploaded")
+        col_docs = st.columns(2)
+        
+        with col_docs[0]:
+            st.subheader("📸 Photo")
+            photo_found = False
+            if os.path.exists(uploads_dir):
+                for file in os.listdir(uploads_dir):
+                    if file.startswith('photo_'):
+                        photo_path = os.path.join(uploads_dir, file)
+                        try:
+                            photo_img = Image.open(photo_path)
+                            st.image(photo_img, caption="Your Photo", width=200)
+                            st.success(f"✅ {file}")
+                            photo_found = True
+                        except:
+                            st.error("Could not load photo")
+            if not photo_found:
+                st.warning("❌ Photo not uploaded")
+        
+        with col_docs[1]:
+            st.subheader("✍️ Signature")
+            sign_found = False
+            if os.path.exists(uploads_dir):
+                for file in os.listdir(uploads_dir):
+                    if file.startswith('signature_'):
+                        sign_path = os.path.join(uploads_dir, file)
+                        try:
+                            sign_img = Image.open(sign_path)
+                            st.image(sign_img, caption="Your Signature", width=200)
+                            st.success(f"✅ {file}")
+                            sign_found = True
+                        except:
+                            st.error("Could not load signature")
+            if not sign_found:
+                st.warning("❌ Signature not uploaded")
+        
+        st.divider()
+        
+        # Other documents
+        col_other = st.columns(2)
+        
+        with col_other[0]:
+            st.write("**📊 Previous Marksheet**")
+            marksheet_found = False
+            if os.path.exists(uploads_dir):
+                for file in os.listdir(uploads_dir):
+                    if file.startswith('marksheet_'):
+                        st.success(f"✅ {file}")
+                        marksheet_found = True
+            if not marksheet_found:
+                st.warning("❌ Not uploaded")
+        
+        with col_other[1]:
+            st.write("**🆔 Aadhaar Card**")
+            aadhar_found = False
+            if os.path.exists(uploads_dir):
+                for file in os.listdir(uploads_dir):
+                    if file.startswith('aadhar_'):
+                        st.success(f"✅ {file}")
+                        aadhar_found = True
+            if not aadhar_found:
+                st.warning("❌ Not uploaded")
     
     st.divider()
     
@@ -509,84 +779,176 @@ def step_4_preview():
             st.rerun()
 
 def step_5_confirmation():
-    """Step 5: Final Confirmation"""
+    """Step 5: Final Confirmation with Enhanced Admit Card"""
     st.markdown("<div class='step-header'><h3>Step 5️⃣ : Confirmation & Admit Card / पुष्टि और प्रवेश पत्र</h3></div>", 
                unsafe_allow_html=True)
     
     form_data = st.session_state.form_data
     user_data = st.session_state.user_data
     user_email = user_data['email']
+    submission_date = user_data.get('submission_date', '')
     
     # Success Message
     st.markdown("""
         <div class='success-box'>
             <h3>✅ Application Submitted Successfully!</h3>
-            <p>आपका आवेदन सफलतापूर्वक जमा किया गया है।</p>
+            <p>आपका आवेदन सफलतापूर्वक जमा किया गया है। Your admit card is ready!</p>
         </div>
     """, unsafe_allow_html=True)
     
-    # Generate Admit Card
-    col1, col2 = st.columns([2, 1])
+    # Tabs for Preview, Download, Email
+    tab1, tab2, tab3 = st.tabs(["👁️ Preview", "📥 Download", "📧 Email"])
     
-    with col1:
-        st.subheader("📄 Admit Card / प्रवेश पत्र")
+    with tab1:
+        st.subheader("📋 Admit Card Preview")
         
-        admit_data = f"""
-        ╔════════════════════════════════════════════════╗
-        ║        NATIONAL INSTITUTE OF ACCOUNTANTS       ║
-        ║              STUDENT ADMIT CARD                ║
-        ╠════════════════════════════════════════════════╣
-        ║                                                ║
-        ║  Registration Number: {user_email[:10].upper()}    ║
-        ║  Name: {form_data.get('full_name', 'N/A'):<31} ║
-        ║  Email: {user_email:<38} ║
-        ║  Phone: {form_data.get('phone', 'N/A'):<37} ║
-        ║  DOB: {form_data.get('dob', 'N/A'):<39} ║
-        ║  Submission Date: {user_data.get('submission_date', ''):<28} ║
-        ║                                                ║
-        ║  Status: ✅ APPROVED                           ║
-        ║                                                ║
-        ║  Valid Till: {(datetime.now().year + 1)}-12-31 {' '*14} ║
-        ║                                                ║
-        ╚════════════════════════════════════════════════╝
-        """
+        # Get photo and signature paths
+        uploads_dir = f"student_uploads/{user_email}"
+        photo_path = None
+        sign_path = None
         
-        st.code(admit_data)
+        if os.path.exists(uploads_dir):
+            for file in os.listdir(uploads_dir):
+                if file.startswith('photo_'):
+                    photo_path = os.path.join(uploads_dir, file)
+                elif file.startswith('signature_'):
+                    sign_path = os.path.join(uploads_dir, file)
+        
+        # Generate admit card image
+        admit_card = generate_admit_card_image(form_data, user_email, submission_date, photo_path, sign_path)
+        
+        # Display admit card
+        col_preview = st.columns([2, 1])
+        with col_preview[0]:
+            st.image(admit_card, use_column_width=True)
+        
+        with col_preview[1]:
+            st.metric("Reg. No.", user_email[:10].upper())
+            st.metric("Status", "✅ APPROVED")
+            st.metric("Date", submission_date)
+            
+            # Get exam details
+            exam_location = get_random_exam_location()
+            exam_date = get_random_exam_date()
+            
+            st.info(f"""
+            **Exam Location:**
+            {exam_location['name']}
+            
+            {exam_location['location']}
+            
+            **Exam Date:** {exam_date}
+            """)
+        
+        st.divider()
+        
+        # Display uploaded documents
+        st.subheader("📸 Your Documents")
+        col_docs = st.columns(2)
+        
+        with col_docs[0]:
+            st.write("**📷 Photo**")
+            if photo_path and os.path.exists(photo_path):
+                photo_img = Image.open(photo_path)
+                st.image(photo_img, width=200)
+            else:
+                st.info("Photo not uploaded")
+        
+        with col_docs[1]:
+            st.write("**✍️ Signature**")
+            if sign_path and os.path.exists(sign_path):
+                sign_img = Image.open(sign_path)
+                st.image(sign_img, width=200)
+            else:
+                st.info("Signature not uploaded")
+        
+        st.divider()
+        
+        # Student Details
+        st.subheader("👤 Student Details on Admit Card")
+        col_details = st.columns(3)
+        
+        with col_details[0]:
+            st.write(f"**Name:** {form_data.get('full_name', 'N/A')}")
+            st.write(f"**Email:** {user_email}")
+            st.write(f"**Phone:** {form_data.get('phone', 'N/A')}")
+        
+        with col_details[1]:
+            st.write(f"**DOB:** {form_data.get('dob', 'N/A')}")
+            st.write(f"**Gender:** {form_data.get('gender', 'N/A')}")
+            st.write(f"**City:** {form_data.get('city', 'N/A')}")
+        
+        with col_details[2]:
+            st.write(f"**State:** {form_data.get('state', 'N/A')}")
+            st.write(f"**Qualification:** {form_data.get('qualification', 'N/A')}")
+            st.write(f"**Submitted:** {submission_date}")
     
-    with col2:
-        st.metric("Application ID", user_email[:10].upper())
-        st.metric("Status", "✅ APPROVED")
-        st.metric("Submitted On", user_data.get('submission_date', 'N/A'))
+    with tab2:
+        st.subheader("📥 Download Your Admit Card")
+        
+        # Generate admit card image
+        admit_card = generate_admit_card_image(form_data, user_email, submission_date)
+        
+        # Convert to PNG bytes
+        img_bytes = BytesIO()
+        admit_card.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        
+        # Download button
+        st.download_button(
+            label="📥 Download Admit Card (PNG)",
+            data=img_bytes.getvalue(),
+            file_name=f"admit_card_{user_email}.png",
+            mime="image/png",
+            use_container_width=True
+        )
+        
+        st.success("✅ Your admit card is ready to download!")
+        st.info("Save this file safely. You'll need to bring it to the exam center.")
     
-    # Important Information
-    st.info("""
-    📌 **Important Information:**
-    - Your admit card has been generated and can be downloaded
-    - A confirmation email will be sent to your registered email
-    - Keep your application ID safe for future reference
-    - You will receive further instructions via email
-    """)
-    
-    # Download Admit Card
-    col_download = st.columns(3)
-    with col_download[0]:
-        if st.button("📥 Download Admit Card", use_container_width=True):
-            st.success("Admit card download initiated")
-    
-    with col_download[1]:
-        if st.button("📧 Send to Email", use_container_width=True):
-            st.success(f"Admit card sent to {user_email}")
-    
-    with col_download[2]:
-        if st.button("🔙 Go to Dashboard", use_container_width=True):
-            st.session_state.current_step = 0
-            st.rerun()
+    with tab3:
+        st.subheader("📧 Send Admit Card via Email")
+        
+        col_email = st.columns([2, 1])
+        
+        with col_email[0]:
+            st.write(f"**Send to:** {user_email}")
+            st.write("Your admit card will be sent as an attachment.")
+        
+        with col_email[1]:
+            if st.button("📧 Send Email", use_container_width=True):
+                # Generate admit card image
+                admit_card = generate_admit_card_image(form_data, user_email, submission_date)
+                
+                # Convert to PNG bytes
+                img_bytes = BytesIO()
+                admit_card.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                
+                # Try to send email
+                success, message = send_admit_card_email(user_email, form_data.get('full_name', 'Student'), img_bytes.getvalue())
+                
+                if success:
+                    st.success(f"✅ {message}")
+                else:
+                    st.warning(f"⚠️ {message}\n\nNote: Email configuration not set. Use Download option instead.")
     
     st.divider()
     
-    # Application Summary
-    with st.expander("📋 View Complete Application Summary"):
-        st.json(form_data)
+    # Important Instructions
+    st.subheader("📌 Important Instructions")
+    instructions = get_random_instructions()
+    for i, instruction in enumerate(instructions, 1):
+        st.write(f"{i}. {instruction}")
+    
+    st.divider()
+    
+    # Dashboard button
+    col_btn = st.columns(3)
+    with col_btn[1]:
+        if st.button("🔙 Back to Dashboard", use_container_width=True):
+            st.session_state.current_step = 0
+            st.rerun()
 
 def dashboard():
     """Student Dashboard"""
